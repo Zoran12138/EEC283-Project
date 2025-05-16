@@ -1,6 +1,9 @@
-// Testbench for regfile.sv: clock, golden_mem, directed tests, self-check.
-//------------------------------------------------------------------------------
 `timescale 1ns/1ps
+
+//------------------------------------------------------------------------------
+// tb_regfile.sv
+// Testbench for regfile.sv: directed tests + randomized tests + golden model
+//------------------------------------------------------------------------------
 
 module tb_regfile;
 
@@ -8,97 +11,125 @@ module tb_regfile;
   localparam int WIDTH = 32;
   localparam int DEPTH = 32;
 
-  // signals
-  logic                   clk;
+  // clock
+  logic clk = 0;
+  always #5 clk = ~clk;  // 10 ns period
+
+  // DUT signals
   logic                   we;
-  logic [$clog2(DEPTH)-1:0] waddr;
+  logic [$clog2(DEPTH)-1:0] waddr, raddr1, raddr2;
   logic [WIDTH-1:0]       wdata;
-  logic [$clog2(DEPTH)-1:0] raddr1, raddr2;
   logic [WIDTH-1:0]       rdata1, rdata2;
 
-  // Instantiate DUT
+  // instantiate DUT
   regfile #(.WIDTH(WIDTH), .DEPTH(DEPTH)) dut (
-    .clk   (clk),
-    .we    (we),
-    .waddr (waddr),
-    .wdata (wdata),
-    .raddr1(raddr1),
-    .raddr2(raddr2),
-    .rdata1(rdata1),
-    .rdata2(rdata2)
+    .clk    (clk),
+    .we     (we),
+    .waddr  (waddr),
+    .wdata  (wdata),
+    .raddr1 (raddr1),
+    .raddr2 (raddr2),
+    .rdata1 (rdata1),
+    .rdata2 (rdata2)
   );
 
-  // Golden reference model
+  // golden model storage
   logic [WIDTH-1:0] golden_mem [0:DEPTH-1];
-
-  // clock generation: 10 ns period
-  initial clk = 0;
-  always #5 clk = ~clk;
 
   // initialize
   initial begin
     we      = 0;
-    waddr   = 0;
+    waddr   = '0;
     wdata   = '0;
-    raddr1  = 0;
-    raddr2  = 0;
-    // zero out golden
-    for (int i = 0; i < DEPTH; i++) golden_mem[i] = '0;
+    raddr1  = '0;
+    raddr2  = '0;
+    // clear golden model
+    for (int i = 0; i < DEPTH; i++)
+      golden_mem[i] = '0;
     #10;
   end
 
-  // Drive golden model on writes
+  // drive golden model on writes
   always_ff @(posedge clk) begin
-    if (we && waddr != '0) begin
+    if (we && waddr != '0)
       golden_mem[waddr] <= wdata;
-    end
   end
 
-  // Checker: on each read cycle compare DUT vs golden
+  // checker: compare DUT output vs golden model
   always_ff @(posedge clk) begin
-    // only check when not writing (so reads settle)
     if (!we) begin
-      // port1
-      if (raddr1 != '0 && rdata1 !== golden_mem[raddr1]) begin
+      if (raddr1 != '0 && rdata1 !== golden_mem[raddr1])
         $error("Mismatch @ rdata1: addr=%0d dut=%h gold=%h",
                raddr1, rdata1, golden_mem[raddr1]);
-      end
-      // port2
-      if (raddr2 != '0 && rdata2 !== golden_mem[raddr2]) begin
+      if (raddr2 != '0 && rdata2 !== golden_mem[raddr2])
         $error("Mismatch @ rdata2: addr=%0d dut=%h gold=%h",
                raddr2, rdata2, golden_mem[raddr2]);
-      end
     end
   end
 
-  // Directed test sequence
+  // --------------------------------------------------------------------------
+  // 1) Directed tests
+  // --------------------------------------------------------------------------
   initial begin
     #20;
     $display("=== Directed tests start ===");
 
     // Test 1: write to x0 should have no effect
     we     = 1; waddr = 0; wdata = 32'hDEAD_BEEF; #10;
-    we     = 0; raddr1 = 0; #10;
-    $display("Read x0 = %h (expect 0)", rdata1);
+    we     = 0; raddr1 = 0;                 #10;
+    $display("Read x0 = %h (expect 00000000)", rdata1);
 
     // Test 2: simple write-read
     we     = 1; waddr = 5; wdata = 32'h1234_ABCD; #10;
-    we     = 0; raddr1 = 5; #10;
-    $display("Read [5] = %h (expect 1234_ABCD)", rdata1);
+    we     = 0; raddr1 = 5;                     #10;
+    $display("Read [5] = %h (expect 1234ABCD)", rdata1);
 
     // Test 3: same-cycle write & read
     we     = 1; waddr = 7; wdata = 32'hCAFEBABE;
-    raddr1 = 7; raddr2 = 7; #10;
-    we     = 0; 
+    raddr1 = 7; raddr2 = 7;                     #10;
+    we     = 0;
     $display("RW collision: r1=%h, r2=%h (expect CAFEBABE)", rdata1, rdata2);
 
     // Test 4: multi-cycle writes to same address
     we     = 1; waddr = 10; wdata = 32'hAAAAAAAA; #10;
-             wdata = 32'h55555555; #10;
-    we     = 0; raddr1 = 10; #10;
+             wdata = 32'h55555555;               #10;
+    we     = 0; raddr1 = 10;                     #10;
     $display("Multi-write: r1=%h (expect 55555555)", rdata1);
 
     $display("=== Directed tests done ===");
+  end
+
+  // --------------------------------------------------------------------------
+  // 2) Randomized tests
+  // --------------------------------------------------------------------------
+  // define random test class
+  class RFTest;
+    rand bit                   we;
+    rand bit [$clog2(DEPTH)-1:0] waddr, raddr1, raddr2;
+    rand bit [WIDTH-1:0]       wdata;
+    // no additional constraints here, but you can add if needed
+  endclass
+
+  // 在模块最顶层声明循环变量
+  int i;
+
+  initial begin
+    #200;
+    $display("=== Randomized tests start ===");
+    RFTest tc;
+
+    // 改成先声明 i，再用 i 循环
+    for (i = 0; i < 1000; i++) begin
+      tc = new();
+      assert(tc.randomize()) else $fatal("randomize failed");
+      we     = tc.we;
+      waddr  = tc.waddr;
+      wdata  = tc.wdata;
+      raddr1 = tc.raddr1;
+      raddr2 = tc.raddr2;
+      #10;
+    end
+    $display("=== Randomized tests done ===");
     $finish;
   end
 
