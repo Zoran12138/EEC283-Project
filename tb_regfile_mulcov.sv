@@ -84,22 +84,22 @@ module tb_regfile_mulcov;
   initial begin
     automatic int detected = 0;
     automatic int injected = 0;
-    automatic int seed;
-    automatic int num_fault_bits;
-    automatic int fault_bit;
 
     #30;
     $display("=== Random Fault Injection Campaign ===");
 
     repeat (num_faults) begin
-      seed = $time + injected;
+      automatic int seed = {$urandom, $time, $realtime} ^ $urandom_range(0, 1000);
+      automatic int fault_bit;
+      automatic int num_fault_bits;
+
       fault_enable = 1;
-      fault_type = $urandom(seed) % 2;
-      fault_addr = $urandom(seed + 1) % DEPTH;
+      fault_type = $urandom(seed + 1) % 2;
+      fault_addr = $urandom(seed + 2) % DEPTH;
 
       // Multi-bit fault mask generation
       fault_mask = 0;
-      num_fault_bits = 2 + $urandom(seed + 2) % 3; // 2–4 bits
+      num_fault_bits = 2 + $urandom(seed + 3) % 3; // 2–4 bits
       for (int i = 0; i < num_fault_bits; i++) begin
         fault_bit = $urandom(seed + i + 10) % WIDTH;
         fault_mask |= (32'b1 << fault_bit);
