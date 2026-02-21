@@ -1,0 +1,70 @@
+module regfile #(
+    parameter WIDTH = 32,
+    parameter DEPTH = 32,
+    parameter ADDRW = 5
+)(
+    input clk,
+    input we,
+    input [ADDRW-1:0] waddr,
+    input [WIDTH-1:0] wdata,
+    input [ADDRW-1:0] raddr1,
+    input [ADDRW-1:0] raddr2,
+    output [WIDTH-1:0] rdata1,
+    output [WIDTH-1:0] rdata2,
+
+    input fault_enable,
+    input [ADDRW-1:0] fault_addr,
+    input [WIDTH-1:0] fault_mask,
+    input [1:0] fault_type
+);
+
+    reg [WIDTH-1:0] mem [0:DEPTH-1];
+
+    // Write (x0 pinned)
+    always @(posedge clk) begin
+        if (we && (waddr != 0))
+            mem[waddr] <= wdata;
+    end
+
+    // Write-first bypass logic
+    wire r1_is_x0 = (raddr1 == 0);
+    wire r2_is_x0 = (raddr2 == 0);
+
+    wire bypass1 = we && (waddr == raddr1) && !r1_is_x0;
+    wire bypass2 = we && (waddr == raddr2) && !r2_is_x0;
+
+    wire [WIDTH-1:0] r1_raw =
+        r1_is_x0 ? 0 :
+        (bypass1 ? wdata : mem[raddr1]);
+
+    wire [WIDTH-1:0] r2_raw =
+        r2_is_x0 ? 0 :
+        (bypass2 ? wdata : mem[raddr2]);
+
+    // Fault injection
+    function [WIDTH-1:0] apply_fault;
+        input [WIDTH-1:0] val;
+        input hit;
+        input [1:0] type;
+        input [WIDTH-1:0] mask;
+        begin
+            if (!hit)
+                apply_fault = val;
+            else begin
+                case (type)
+                    2'd1: apply_fault = val ^  mask;   // flip
+                    2'd2: apply_fault = val & ~mask;   // stuck-0
+                    2'd3: apply_fault = val |  mask;   // stuck-1
+                    default: apply_fault = val;
+                endcase
+            end
+        end
+    endfunction
+
+    wire fault_hit1 = fault_enable && (raddr1 == fault_addr) && !r1_is_x0;
+    wire fault_hit2 = fault_enable && (raddr2 == fault_addr) && !r2_is_x0;
+
+    assign rdata1 = apply_fault(r1_raw, fault_hit1, fault_type, fault_mask);
+    assign rdata2 = apply_fault(r2_raw, fault_hit2, fault_type, fault_mask);
+
+endmodule
