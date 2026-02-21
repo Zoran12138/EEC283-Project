@@ -1,0 +1,64 @@
+module project286(
+    input        ADC_CLK_10,
+    input        MAX10_CLK1_50,
+    input        MAX10_CLK2_50,
+
+    input  [1:0] KEY,
+    output [9:0] LEDR,
+    input  [9:0] SW
+);
+
+    // Use MAX10 50MHz clock
+    wire clk   = MAX10_CLK1_50;
+    wire rst_n = KEY[0];   // active-low button
+    wire key1  = KEY[1];
+
+    // Detect button press (1 -> 0 transition)
+    reg key1_d;
+    always @(posedge clk)
+        key1_d <= key1;
+
+    wire write_pulse = (key1_d == 1'b1) && (key1 == 1'b0);
+
+    // Counter for write data
+    reg [31:0] counter;
+    always @(posedge clk) begin
+        if (!rst_n)
+            counter <= 32'd0;
+        else if (write_pulse)
+            counter <= counter + 32'd1;
+    end
+
+    wire we           = write_pulse;
+    wire [4:0] waddr  = 5'd1;        // always write x1
+    wire [31:0] wdata = counter;
+
+    wire [4:0] raddr1 = SW[4:0];
+    wire [4:0] raddr2 = 5'd0;
+
+    // Minimal fault control
+    wire        fault_enable = 1'b1;
+    wire [4:0]  fault_addr   = SW[9:5];
+    wire [31:0] fault_mask   = 32'h0000_0001;  // flip bit0
+    wire [1:0]  fault_type   = 2'd1;           // flip
+
+    wire [31:0] rdata1, rdata2;
+
+    regfile u_rf (
+        .clk(clk),
+        .we(we),
+        .waddr(waddr),
+        .wdata(wdata),
+        .raddr1(raddr1),
+        .raddr2(raddr2),
+        .rdata1(rdata1),
+        .rdata2(rdata2),
+        .fault_enable(fault_enable),
+        .fault_addr(fault_addr),
+        .fault_mask(fault_mask),
+        .fault_type(fault_type)
+    );
+
+    assign LEDR = rdata1[9:0];
+
+endmodule
